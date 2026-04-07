@@ -59,7 +59,10 @@ This plan outlines the steps to upgrade Mission Control from a configuration inv
 
 ---
 
-## Execution Strategy (Autonomy Mode)
+## Status: Phase 1 & 3 Complete, Phase 2 in Progress
+- [x] Phase 1: Live Log Streaming (SSE Backend + Console UI)
+- [ ] Phase 2: Human-in-the-Loop (Inbox/Approval Service)
+- [x] Phase 3: Resource & Cost Monitoring (Metrics Service + UI Cards)
 - **Step 1:** Implement Phase 1 Backend (SSE Streamer).
 - **Step 2:** Implement Phase 1 Frontend (Log Console).
 - **Step 3:** Commit and deploy Phase 1.
