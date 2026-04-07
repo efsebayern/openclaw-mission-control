@@ -157,7 +157,7 @@ export function GatewaysTable({
                 {
                   key: "edit",
                   label: "Edit",
-                  href: (gateway) => `/gateways/${gateway.id}/edit`,
+                  href: (gateway: GatewayRead) => `/gateways/${gateway.id}/edit`,
                 },
                 {
                   key: "delete",

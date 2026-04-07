@@ -32,6 +32,7 @@ const GATEWAY_SORTABLE_COLUMNS = ["name", "workspace_root", "updated_at"];
 
 export default function GatewaysPage() {
   const { isSignedIn } = useAuth();
+  const { isAdmin } = useOrganizationMembership(isSignedIn);
   const queryClient = useQueryClient();
   const { sorting, onSortingChange } = useUrlSorting({
     allowedColumnIds: GATEWAY_SORTABLE_COLUMNS,
