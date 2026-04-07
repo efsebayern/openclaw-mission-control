@@ -114,6 +114,22 @@ async def get_agent(
     return await service.get_agent(agent_id=agent_id, ctx=ctx)
 
 
+@router.get("/{agent_id}/logs/stream")
+async def stream_agent_logs(
+    request: Request,
+    agent_id: str,
+    session: AsyncSession = SESSION_DEP,
+    ctx: OrganizationContext = ORG_ADMIN_DEP,
+) -> EventSourceResponse:
+    """Stream gateway log events for a specific agent as SSE."""
+    service = AgentLifecycleService(session)
+    return await service.stream_agent_logs(
+        request=request,
+        agent_id=agent_id,
+        ctx=ctx,
+    )
+
+
 @router.patch("/{agent_id}", response_model=AgentRead)
 async def update_agent(
     agent_id: str,

@@ -11,9 +11,10 @@ import asyncio
 import json
 import platform as _platform
 import ssl
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from time import perf_counter, time
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from urllib.parse import urlencode, urlparse, urlunparse
 from uuid import uuid4
 
@@ -168,6 +169,14 @@ def is_known_gateway_method(method: str) -> bool:
 
 class OpenClawGatewayError(RuntimeError):
     """Raised when OpenClaw gateway calls fail."""
+
+
+class GatewayEventListener(Protocol):
+    """Protocol for handling asynchronous gateway events."""
+
+    async def on_event(self, event: str, payload: Any) -> None:
+        """Called when a gateway event is received."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -433,6 +442,58 @@ async def _openclaw_connect_metadata_once(
     async with websockets.connect(gateway_url, **connect_kwargs) as ws:
         first_message = await _recv_first_message_or_none(ws)
         return await _ensure_connected(ws, first_message, config)
+
+
+async def openclaw_listen(
+    *,
+    config: GatewayConfig,
+    events: list[str] | None = None,
+    listener: GatewayEventListener | None = None,
+    timeout: float | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Open a long-running connection and yield events from the gateway.
+
+    If a listener is provided, it will be called for each event, and the
+    iterator will not yield (it will run until the connection closes or
+    timeout is reached).
+    """
+    gateway_url = _build_gateway_url(config)
+    origin = _build_control_ui_origin(gateway_url) if config.disable_device_pairing else None
+    ssl_context = _create_ssl_context(config)
+    connect_kwargs: dict[str, Any] = {"ping_interval": 30}
+    if origin is not None:
+        connect_kwargs["origin"] = origin
+    if ssl_context is not None:
+        connect_kwargs["ssl"] = ssl_context
+
+    async with websockets.connect(gateway_url, **connect_kwargs) as ws:
+        first_message = await _recv_first_message_or_none(ws)
+        await _ensure_connected(ws, first_message, config)
+
+        start_time = time()
+        while True:
+            if timeout is not None and (time() - start_time) > timeout:
+                break
+
+            try:
+                raw = await ws.recv()
+                data = json.loads(raw)
+
+                if data.get("type") == "event":
+                    event_name = data.get("event")
+                    if events and event_name not in events:
+                        continue
+
+                    payload = data.get("payload")
+                    if listener:
+                        await listener.on_event(event_name, payload)
+                    else:
+                        yield {"event": event_name, "payload": payload}
+
+            except (WebSocketException, ConnectionError):
+                break
+            except asyncio.CancelledError:
+                break
 
 
 async def openclaw_call(

@@ -1446,6 +1446,47 @@ class AgentLifecycleService(OpenClawDBService):
         await self.session.refresh(agent)
         return self.to_agent_read(self.with_computed_status(agent))
 
+    async def require_gateway(self, gateway_id: UUID, organization_id: UUID) -> Gateway:
+        """Return a gateway or raise HTTP 404."""
+        gateway = await Gateway.objects.by_id(gateway_id).first(self.session)
+        if gateway is None or gateway.organization_id != organization_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        return gateway
+
+    async def stream_agent_logs(
+        self,
+        request: Request,
+        agent_id: str | UUID,
+        ctx: OrganizationContext,
+    ) -> EventSourceResponse:
+        """Proxy gateway logs for a specific agent via SSE."""
+        agent = await self.get_agent(agent_id=str(agent_id), ctx=ctx)
+        gateway = await self.require_gateway(agent.gateway_id, ctx.organization.id)
+        config = gateway_client_config(gateway)
+
+        async def event_generator() -> AsyncIterator[dict[str, Any]]:
+            try:
+                # We listen for all logs and filter by session id if possible.
+                async for event in openclaw_listen(config=config, events=["log"]):
+                    if await request.is_disconnected():
+                        break
+
+                    payload = event["payload"]
+                    # Optionally filter by agent.openclaw_session_id if provided by gateway
+                    yield {
+                        "event": "log",
+                        "id": str(uuid4()),
+                        "data": json.dumps(payload),
+                    }
+            except Exception as e:
+                self.logger.error("gateway.log_stream.error agent_id=%s error=%s", agent_id, str(e))
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": "Gateway log stream interrupted"}),
+                }
+
+        return EventSourceResponse(event_generator())
+
     async def list_agents(
         self,
         *,
