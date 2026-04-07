@@ -15,7 +15,11 @@ from app.db.pagination import paginate
 from app.db.session import get_session
 from app.models.agents import Agent
 from app.models.gateways import Gateway
-from app.models.skills import GatewayInstalledSkill
+from app.models.organizations import Organization
+from app.services.openclaw.agent_sync_service import AgentSyncService
+from app.schemas.agents import AgentRead
+from app.schemas.agents import AgentRead
+from app.services.openclaw.agent_sync_service import AgentSyncService
 from app.schemas.common import OkResponse
 from app.schemas.gateways import (
     GatewayCreate,
@@ -183,6 +187,36 @@ async def sync_gateway_templates(
         organization_id=ctx.organization.id,
     )
     return await service.sync_templates(gateway, query=sync_query, auth=auth)
+
+
+@router.post("/{gateway_id}/sync-agents", response_model=list[AgentRead])
+async def sync_gateway_agents(
+    gateway_id: UUID,
+    session: AsyncSession = SESSION_DEP,
+    ctx: OrganizationContext = ORG_ADMIN_DEP,
+) -> list[AgentRead]:
+    """Synchronize agents from the gateway into Mission Control."""
+    service = AgentSyncService(session)
+    # We use the organization from the context (active org)
+    organization = ctx.organization
+    agents = await service.sync_agents_from_gateway(
+        gateway_id=gateway_id,
+        organization=organization
+    )
+    # Cast to AgentRead
+    return [AgentRead.model_validate(a) for a in agents]
+
+
+@router.post("/{gateway_id}/sync-templates", response_model=GatewayTemplatesSyncResult)
+async def sync_gateway_templates_alias(
+    gateway_id: UUID,
+    sync_query: GatewayTemplateSyncQuery = SYNC_QUERY_DEP,
+    session: AsyncSession = SESSION_DEP,
+    auth: AuthContext = AUTH_DEP,
+    ctx: OrganizationContext = ORG_ADMIN_DEP,
+) -> GatewayTemplatesSyncResult:
+    """Alias for template sync to maintain consistency with sync-agents."""
+    return await sync_gateway_templates(gateway_id, sync_query, session, auth, ctx)
 
 
 @router.delete("/{gateway_id}", response_model=OkResponse)

@@ -29,6 +29,8 @@ type GatewaysTableProps = {
   hiddenColumns?: string[];
   columnOrder?: string[];
   disableSorting?: boolean;
+  onSyncAgents?: (gateway: GatewayRead) => void;
+  onSyncTemplates?: (gateway: GatewayRead) => void;
   onDelete?: (gateway: GatewayRead) => void;
   emptyMessage?: string;
   emptyState?: Omit<DataTableEmptyState, "icon"> & {
@@ -61,6 +63,8 @@ export function GatewaysTable({
   hiddenColumns,
   columnOrder,
   disableSorting = false,
+  onSyncAgents,
+  onSyncTemplates,
   onDelete,
   emptyMessage = "No gateways found.",
   emptyState,
@@ -139,8 +143,32 @@ export function GatewaysTable({
       rowActions={
         showActions
           ? {
-              getEditHref: (gateway) => `/gateways/${gateway.id}/edit`,
-              onDelete,
+              actions: [
+                {
+                  key: "sync-agents",
+                  label: "Sync Agents",
+                  onClick: onSyncAgents,
+                },
+                {
+                  key: "sync-templates",
+                  label: "Sync Templates",
+                  onClick: onSyncTemplates,
+                },
+                {
+                  key: "edit",
+                  label: "Edit",
+                  href: (gateway) => `/gateways/${gateway.id}/edit`,
+                },
+                {
+                  key: "delete",
+                  label: "Delete",
+                  onClick: onDelete,
+                },
+              ].filter((a) => {
+                if (a.key === "sync-agents") return !!onSyncAgents;
+                if (a.key === "sync-templates") return !!onSyncTemplates;
+                return true;
+              }),
             }
           : undefined
       }

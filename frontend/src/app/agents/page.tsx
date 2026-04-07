@@ -10,8 +10,9 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { AgentsTable } from "@/components/agents/AgentsTable";
 import { DashboardPageLayout } from "@/components/templates/DashboardPageLayout";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
+import Link from "next/link";
 
 import { ApiError } from "@/api/mutator";
 import {
@@ -132,11 +133,22 @@ export default function AgentsPage() {
         title="Agents"
         description={`${agents.length} agent${agents.length === 1 ? "" : "s"} total.`}
         headerActions={
-          agents.length > 0 ? (
-            <Button onClick={() => router.push("/agents/new")}>
-              New agent
-            </Button>
-          ) : null
+          isAdmin && (
+            <div className="flex gap-2">
+              <Link
+                href="/gateways"
+                className={buttonVariants({
+                  size: "md",
+                  variant: "secondary",
+                })}
+              >
+                Sync with Gateway
+              </Link>
+              <Button onClick={() => router.push("/agents/new")}>
+                New agent
+              </Button>
+            </div>
+          )
         }
         isAdmin={isAdmin}
         adminOnlyMessage="Only organization owners and admins can access agents."
