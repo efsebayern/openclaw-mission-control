@@ -1,0 +1,14 @@
+name: Coolify Deploy Webhook
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify Webhook
+        run: |
+          curl -X GET "https://coolify.efse-it.de/api/v1/deploy?uuid=m4m4342jcmuucvb0k49w4gt1&force=true"                -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
