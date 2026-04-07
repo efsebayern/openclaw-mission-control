@@ -29,7 +29,7 @@ from app.schemas.gateways import (
 )
 from app.schemas.pagination import DefaultLimitOffsetPage
 from app.services.openclaw.admin_service import GatewayAdminLifecycleService
-from app.services.openclaw.session_service import GatewayTemplateSyncQuery
+from app.services.openclaw.metrics_service import GatewayMetricsService
 
 if TYPE_CHECKING:
     from fastapi_pagination.limit_offset import LimitOffsetPage
@@ -205,6 +205,20 @@ async def sync_gateway_agents(
     )
     # Cast to AgentRead
     return [AgentRead.model_validate(a) for a in agents]
+
+
+@router.get("/{gateway_id}/metrics", response_model=dict[str, Any])
+async def get_gateway_metrics(
+    gateway_id: UUID,
+    session: AsyncSession = SESSION_DEP,
+    ctx: OrganizationContext = ORG_ADMIN_DEP,
+) -> dict[str, Any]:
+    """Fetch real-time metrics for a gateway."""
+    service = GatewayMetricsService(session)
+    return await service.get_gateway_status(
+        gateway_id=gateway_id,
+        organization_id=ctx.organization.id,
+    )
 
 
 @router.post("/{gateway_id}/sync-templates", response_model=GatewayTemplatesSyncResult)
