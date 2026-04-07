@@ -14,8 +14,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json tsconfig.json next.config.ts ./
 COPY postcss.config.js tailwind.config.cjs ./
 COPY src/ ./src/
-# public/ is optional, using a wildcard that won't fail if empty.
-COPY public* ./public/
+COPY public/ ./public/
 
 # Allows configuring the API URL at build time.
 ARG NEXT_PUBLIC_API_URL=auto
