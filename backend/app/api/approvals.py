@@ -28,6 +28,7 @@ from app.models.agents import Agent
 from app.models.approvals import Approval
 from app.models.tasks import Task
 from app.schemas.approvals import ApprovalCreate, ApprovalRead, ApprovalStatus, ApprovalUpdate
+from app.services.openclaw.approval_service import GatewayApprovalService
 from app.schemas.pagination import DefaultLimitOffsetPage
 from app.services.activity_log import record_activity
 from app.services.approval_task_links import (
@@ -441,8 +442,21 @@ async def update_approval(
     payload: ApprovalUpdate,
     board: Board = BOARD_USER_WRITE_DEP,
     session: AsyncSession = SESSION_DEP,
+    ctx: OrganizationContext = Depends(require_org_member),
 ) -> ApprovalRead:
-    """Update an approval's status and resolution timestamp."""
+    """Update an approval's status and notify the gateway if resolving."""
+    # Use the specialized service if status is changing to approved/rejected
+    if payload.status in {"approved", "rejected"}:
+        service = GatewayApprovalService(session)
+        approval = await service.resolve_approval(
+            approval_id=UUID(approval_id),
+            decision=payload.status,
+            organization_id=ctx.organization.id,
+        )
+        reads = await _approval_reads(session, [approval])
+        return reads[0]
+
+    # Fallback to existing manual logic for other updates
     approval = await Approval.objects.by_id(approval_id).first(session)
     if approval is None or approval.board_id != board.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
