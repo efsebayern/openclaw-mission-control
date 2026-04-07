@@ -34,6 +34,7 @@ import type {
 } from "@/api/generated/model";
 import { Markdown } from "@/components/atoms/Markdown";
 import { StatusPill } from "@/components/atoms/StatusPill";
+import { AgentLogConsole } from "@/components/agents/AgentLogConsole";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { DashboardShell } from "@/components/templates/DashboardShell";
 import { Button } from "@/components/ui/button";
@@ -394,21 +395,7 @@ export default function AgentDetailPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex-1 flex flex-col min-h-0 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden font-mono text-xs">
-                    <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between">
-                      <span className="text-slate-400">agent_logs_stream.tty</span>
-                      <div className="flex gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-full bg-red-500/20" />
-                        <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/20" />
-                        <div className="w-2.5 h-2.5 rounded-full bg-green-500/20" />
-                      </div>
-                    </div>
-                    <div className="flex-1 p-4 overflow-y-auto space-y-1 text-slate-300">
-                      <p className="text-slate-500 italic">Connecting to gateway stream...</p>
-                      <p className="text-blue-400">[SYSTEM] Session {agent.openclaw_session_id} monitor active</p>
-                      <p className="text-slate-500">Wait for next agent turn or system event...</p>
-                    </div>
-                  </div>
+                  <AgentLogConsole agentId={agent.id} />
                 )}
               </>
             ) : (
