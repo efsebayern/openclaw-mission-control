@@ -35,6 +35,7 @@ import type {
 import { Markdown } from "@/components/atoms/Markdown";
 import { StatusPill } from "@/components/atoms/StatusPill";
 import { AgentLogConsole } from "@/components/agents/AgentLogConsole";
+import { AgentMetricsCard } from "@/components/agents/AgentMetricsCard";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { DashboardShell } from "@/components/templates/DashboardShell";
 import { Button } from "@/components/ui/button";
@@ -249,6 +250,10 @@ export default function AgentDetailPage() {
                 {activeTab === "overview" ? (
                   <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
                     <div className="space-y-6">
+                      <AgentMetricsCard 
+                        agentId={agent.id} 
+                        gatewayId={agent.gateway_id} 
+                      />
                       <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-5">
                         <div className="flex items-center justify-between">
                           <div>
