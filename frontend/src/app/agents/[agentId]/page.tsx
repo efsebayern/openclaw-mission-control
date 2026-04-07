@@ -36,6 +36,7 @@ import { Markdown } from "@/components/atoms/Markdown";
 import { StatusPill } from "@/components/atoms/StatusPill";
 import { AgentLogConsole } from "@/components/agents/AgentLogConsole";
 import { AgentMetricsCard } from "@/components/agents/AgentMetricsCard";
+import { GatewayApprovalsCard } from "@/components/agents/GatewayApprovalsCard";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { DashboardShell } from "@/components/templates/DashboardShell";
 import { Button } from "@/components/ui/button";
@@ -250,6 +251,9 @@ export default function AgentDetailPage() {
                 {activeTab === "overview" ? (
                   <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
                     <div className="space-y-6">
+                      {agent.board_id && (
+                        <GatewayApprovalsCard boardId={agent.board_id} />
+                      )}
                       <AgentMetricsCard 
                         agentId={agent.id} 
                         gatewayId={agent.gateway_id} 
