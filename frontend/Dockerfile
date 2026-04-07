@@ -9,8 +9,11 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Ensure we only copy source files to the builder to keep the cache layer stable.
 COPY --from=deps /app/node_modules ./node_modules
-COPY . ./
+COPY package.json package-lock.json tsconfig.json next.config.ts ./
+COPY src/ ./src/
+COPY public/ ./public/
 
 # Allows configuring the API URL at build time.
 ARG NEXT_PUBLIC_API_URL=auto
