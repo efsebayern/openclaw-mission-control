@@ -1,0 +1,18 @@
+# Ignore all except backend source for faster context transfer
+**
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/alembic.ini
+!backend/app/**
+!backend/migrations/**
+!backend/templates/**
+!scripts/**
+
+# Ignore env and cache
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.env*
+*.log
+.git

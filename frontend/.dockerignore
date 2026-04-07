@@ -1,9 +1,17 @@
+# Ignore all except specific build-relevant files for better context caching
+**
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/tsconfig.json
+!frontend/next.config.ts
+!frontend/postcss.config.js
+!frontend/tailwind.config.cjs
+!frontend/src/**
+!frontend/public/**
+
+# Ignore dev junk
 node_modules
 .next
-coverage
-cypress/screenshots
-cypress/videos
-npm-debug.log*
-.env
-.env.*
+.env*
+*.log
 .git
