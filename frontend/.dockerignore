@@ -1,17 +1,18 @@
-# Ignore all except specific build-relevant files for better context caching
-**
-!frontend/package.json
-!frontend/package-lock.json
-!frontend/tsconfig.json
-!frontend/next.config.ts
-!frontend/postcss.config.js
-!frontend/tailwind.config.cjs
-!frontend/src/**
-!frontend/public/**
-
-# Ignore dev junk
+# Ignore all except build-relevant files
 node_modules
 .next
 .env*
 *.log
 .git
+
+# If using root context for individual Dockerfiles, 
+# keep paths relative to this .dockerignore location.
+# But for Coolify/Compose with subdirectories:
+# **
+# !package.json
+# !tsconfig.json
+# !next.config.ts
+# !postcss.config.js
+# !tailwind.config.cjs
+# !src/**
+# !public/**
