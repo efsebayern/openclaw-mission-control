@@ -32,6 +32,7 @@ import {
 } from "@/api/generated/gateways/gateways";
 import { useOrganizationMembership } from "@/lib/use-organization-membership";
 import { formatRelativeTimestamp, formatTimestamp, parseTimestamp } from "@/lib/formatters";
+import { buildAgentLookup, resolveManagedAgent } from "@/lib/openclaw-session-mapping";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -378,25 +379,16 @@ export function LiveCommandCenter() {
     [boards],
   );
 
-  const agentBySessionKey = useMemo(
-    () =>
-      new Map(
-        agents
-          .filter((agent) => agent.openclaw_session_id)
-          .map((agent) => [agent.openclaw_session_id as string, agent] as const),
-      ),
-    [agents],
-  );
+  const agentLookup = useMemo(() => buildAgentLookup(agents), [agents]);
 
   const sessionRows = useMemo(
     () =>
       liveSessions.map((session) => {
-        const agent = agentBySessionKey.get(session.key) ?? null;
-        const board =
-          agent?.board_id ? (boardById.get(agent.board_id) ?? null) : null;
+        const agent = resolveManagedAgent(session.key, agentLookup);
+        const board = agent?.board_id ? (boardById.get(agent.board_id) ?? null) : null;
         return { session, agent, board };
       }),
-    [agentBySessionKey, boardById, liveSessions],
+    [agentLookup, boardById, liveSessions],
   );
 
   const liveStats = useMemo(() => {
@@ -404,7 +396,9 @@ export function LiveCommandCenter() {
       (query.data?.sessions ?? []).map(parseSessionSummary).filter(Boolean),
     ) as SessionSummary[];
     const runningSessions = allSessions.filter((session) => session.status === "running").length;
-    const managedSessions = allSessions.filter((session) => agentBySessionKey.has(session.key)).length;
+    const managedSessions = allSessions.filter(
+      (session) => resolveManagedAgent(session.key, agentLookup) !== null,
+    ).length;
     const connectedGateways = gatewayStatusQueries.filter((query) => query.data?.connected).length;
     return {
       connectedGateways,
@@ -413,7 +407,7 @@ export function LiveCommandCenter() {
       runningSessions,
       managedSessions,
     };
-  }, [agentBySessionKey, gatewayStatusQueries, gateways.length]);
+  }, [agentLookup, gatewayStatusQueries, gateways.length]);
 
   const syncAgentsMutation = useMutation({
     mutationFn: async (gatewayId: string) => {
@@ -688,7 +682,7 @@ export function LiveCommandCenter() {
                     <span>Tokens: {formatTokens(selectedSession.totalTokens)}</span>
                   </div>
                   {selectedSession ? (() => {
-                    const mappedAgent = agentBySessionKey.get(selectedSession.key) ?? null;
+                    const mappedAgent = resolveManagedAgent(selectedSession.key, agentLookup);
                     const mappedBoard =
                       mappedAgent?.board_id ? (boardById.get(mappedAgent.board_id) ?? null) : null;
                     if (!mappedAgent) return null;

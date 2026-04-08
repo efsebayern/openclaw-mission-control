@@ -48,9 +48,7 @@ export function DashboardSidebar() {
       ? "operational"
       : okValue === false
         ? "degraded"
-        : healthQuery.isError
-          ? "degraded"
-          : "unknown";
+        : "unknown";
   const statusLabel =
     systemStatus === "operational"
       ? "All systems operational"
