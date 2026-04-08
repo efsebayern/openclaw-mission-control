@@ -19,6 +19,7 @@ from app.models.organizations import Organization
 from app.services.openclaw.db_service import OpenClawDBService
 from app.services.openclaw.gateway_rpc import openclaw_call, GatewayConfig
 from app.services.openclaw.gateway_resolver import gateway_client_config
+from app.services.openclaw.shared import GatewayAgentIdentity
 
 logger = get_logger(__name__)
 SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -64,6 +65,11 @@ class AgentSyncService(OpenClawDBService):
         existing_mc_agents_map = {
             a.openclaw_session_id: a for a in existing_mc_agents.all()
         }
+        gateway_main_openclaw_id = GatewayAgentIdentity.openclaw_agent_id(gateway)
+        imported_gateway_main = existing_mc_agents_map.get(gateway_main_openclaw_id)
+        if imported_gateway_main is not None and imported_gateway_main.board_id is not None:
+            await self.session.delete(imported_gateway_main)
+            existing_mc_agents_map.pop(gateway_main_openclaw_id, None)
 
         # For now, create a default board if none exists.
         # This is a temporary solution for agents without a board_id from gateway.
@@ -77,6 +83,13 @@ class AgentSyncService(OpenClawDBService):
                     "Skipping agent from gateway %s with missing 'id': %s",
                     gateway_id,
                     agent_data,
+                )
+                continue
+            if openclaw_session_id == gateway_main_openclaw_id:
+                logger.info(
+                    "Skipping imported gateway-main agent %s during sync for gateway %s",
+                    openclaw_session_id,
+                    gateway_id,
                 )
                 continue
 
