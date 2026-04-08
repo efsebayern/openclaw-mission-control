@@ -143,6 +143,44 @@ async def send_gateway_session_message(
     return OkResponse()
 
 
+@router.post("/sessions/{session_id}/reset", response_model=OkResponse)
+async def reset_gateway_session(
+    session_id: str,
+    params: GatewayResolveQuery = RESOLVE_INPUT_DEP,
+    session: AsyncSession = SESSION_DEP,
+    auth: AuthContext = AUTH_DEP,
+    ctx: OrganizationContext = ORG_ADMIN_DEP,
+) -> OkResponse:
+    """Reset a specific gateway session."""
+    service = GatewaySessionService(session)
+    await service.reset_session(
+        session_id=session_id,
+        params=params,
+        organization_id=ctx.organization.id,
+        user=auth.user,
+    )
+    return OkResponse()
+
+
+@router.delete("/sessions/{session_id}", response_model=OkResponse)
+async def delete_gateway_session(
+    session_id: str,
+    params: GatewayResolveQuery = RESOLVE_INPUT_DEP,
+    session: AsyncSession = SESSION_DEP,
+    auth: AuthContext = AUTH_DEP,
+    ctx: OrganizationContext = ORG_ADMIN_DEP,
+) -> OkResponse:
+    """Delete a specific gateway session."""
+    service = GatewaySessionService(session)
+    await service.delete_session(
+        session_id=session_id,
+        params=params,
+        organization_id=ctx.organization.id,
+        user=auth.user,
+    )
+    return OkResponse()
+
+
 @router.get("/commands", response_model=GatewayCommandsResponse)
 async def gateway_commands(
     _auth: AuthContext = AUTH_DEP,

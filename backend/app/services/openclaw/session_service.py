@@ -27,6 +27,7 @@ from app.services.openclaw.gateway_resolver import gateway_client_config, requir
 from app.services.openclaw.gateway_rpc import GatewayConfig as GatewayClientConfig
 from app.services.openclaw.gateway_rpc import (
     OpenClawGatewayError,
+    delete_session,
     ensure_session,
     get_chat_history,
     openclaw_call,
@@ -410,6 +411,58 @@ class GatewaySessionService(OpenClawDBService):
             if main_session and session_id == main_session:
                 await ensure_session(main_session, config=config, label="Gateway Agent")
             await send_message(payload.content, session_key=session_id, config=config)
+        except OpenClawGatewayError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+
+    async def reset_session(
+        self,
+        *,
+        session_id: str,
+        params: GatewayResolveQuery,
+        organization_id: UUID,
+        user: User | None,
+    ) -> None:
+        board, config, _ = await self.resolve_gateway(
+            params,
+            user=user,
+            organization_id=organization_id,
+        )
+        self._require_same_org(board, organization_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        if board is not None:
+            await require_board_access(self.session, user=user, board=board, write=True)
+        try:
+            await openclaw_call("sessions.reset", {"key": session_id}, config=config)
+        except OpenClawGatewayError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+
+    async def delete_session(
+        self,
+        *,
+        session_id: str,
+        params: GatewayResolveQuery,
+        organization_id: UUID,
+        user: User | None,
+    ) -> None:
+        board, config, _ = await self.resolve_gateway(
+            params,
+            user=user,
+            organization_id=organization_id,
+        )
+        self._require_same_org(board, organization_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        if board is not None:
+            await require_board_access(self.session, user=user, board=board, write=True)
+        try:
+            await delete_session(session_id, config=config)
         except OpenClawGatewayError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

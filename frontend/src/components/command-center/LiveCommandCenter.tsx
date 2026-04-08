@@ -1,11 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import {
   Activity,
   Bot,
+  Pin,
+  PinOff,
+  Play,
+  RotateCcw,
+  Search,
+  ShieldAlert,
+  Trash2,
   MessageSquare,
   RefreshCw,
   SendHorizontal,
@@ -30,7 +37,10 @@ import {
   type listGatewaysApiV1GatewaysGetResponse,
   useListGatewaysApiV1GatewaysGet,
 } from "@/api/generated/gateways/gateways";
+import { createTaskApiV1BoardsBoardIdTasksPost } from "@/api/generated/tasks/tasks";
+import type { TaskCreate } from "@/api/generated/model";
 import { useOrganizationMembership } from "@/lib/use-organization-membership";
+import { readPinnedSessionKeys, writePinnedSessionKeys } from "@/lib/command-center-state";
 import { formatRelativeTimestamp, formatTimestamp, parseTimestamp } from "@/lib/formatters";
 import { buildAgentLookup, resolveManagedAgent } from "@/lib/openclaw-session-mapping";
 import { Button } from "@/components/ui/button";
@@ -238,12 +248,33 @@ async function postSessionMessage(
   );
 }
 
+async function postSessionAction(
+  gatewayId: string,
+  sessionId: string,
+  action: "reset" | "delete",
+): Promise<void> {
+  const query = buildGatewayQuery(gatewayId);
+  const method = action === "delete" ? "DELETE" : "POST";
+  const actionPath = action === "delete" ? "" : `/${action}`;
+  await customFetch<ApiResponse<{ ok: boolean }>>(
+    `/api/v1/gateways/sessions/${encodeURIComponent(sessionId)}${actionPath}?${query}`,
+    { method },
+  );
+}
+
 export function LiveCommandCenter() {
   const { isSignedIn } = useAuth();
   const { isAdmin } = useOrganizationMembership(isSignedIn);
   const [selectedGatewayId, setSelectedGatewayId] = useState<string | null>(null);
   const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
   const [draftMessage, setDraftMessage] = useState("");
+  const [sessionFilter, setSessionFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "managed" | "external">("all");
+  const [pinnedSessionKeys, setPinnedSessionKeys] = useState<string[]>(() => readPinnedSessionKeys());
+  const [handoffBoardId, setHandoffBoardId] = useState("");
+  const [handoffAgentId, setHandoffAgentId] = useState("");
+  const [handoffTitle, setHandoffTitle] = useState("");
+  const [handoffDescription, setHandoffDescription] = useState("");
 
   const gatewaysQuery = useListGatewaysApiV1GatewaysGet<
     listGatewaysApiV1GatewaysGetResponse,
@@ -380,16 +411,71 @@ export function LiveCommandCenter() {
   );
 
   const agentLookup = useMemo(() => buildAgentLookup(agents), [agents]);
+  const pinnedSessionKeySet = useMemo(() => new Set(pinnedSessionKeys), [pinnedSessionKeys]);
 
   const sessionRows = useMemo(
     () =>
       liveSessions.map((session) => {
         const agent = resolveManagedAgent(session.key, agentLookup);
         const board = agent?.board_id ? (boardById.get(agent.board_id) ?? null) : null;
-        return { session, agent, board };
+        const pinned = pinnedSessionKeySet.has(session.key);
+        return { session, agent, board, pinned };
       }),
-    [agentLookup, boardById, liveSessions],
+    [agentLookup, boardById, liveSessions, pinnedSessionKeySet],
   );
+
+  const filteredSessionRows = useMemo(() => {
+    const normalizedFilter = sessionFilter.trim().toLowerCase();
+    return sessionRows
+      .filter(({ session, agent, board }) => {
+        if (statusFilter === "managed" && !agent) return false;
+        if (statusFilter === "external" && agent) return false;
+        if (statusFilter === "running" && session.status !== "running") return false;
+        if (!normalizedFilter) return true;
+        const haystack = [
+          session.label,
+          session.key,
+          session.channel,
+          session.model,
+          agent?.name,
+          board?.name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(normalizedFilter);
+      })
+      .sort((left, right) => {
+        if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+        const leftTs = left.session.updatedAt ? Date.parse(left.session.updatedAt) : 0;
+        const rightTs = right.session.updatedAt ? Date.parse(right.session.updatedAt) : 0;
+        return rightTs - leftTs;
+      });
+  }, [sessionFilter, sessionRows, statusFilter]);
+
+  const selectedManagedAgent = selectedSession ? resolveManagedAgent(selectedSession.key, agentLookup) : null;
+  const selectedManagedBoard =
+    selectedManagedAgent?.board_id ? (boardById.get(selectedManagedAgent.board_id) ?? null) : null;
+  const effectiveHandoffBoardId = handoffBoardId || selectedManagedBoard?.id || "";
+  const effectiveHandoffAgentId = handoffAgentId || selectedManagedAgent?.id || "";
+  const effectiveHandoffTitle =
+    handoffTitle || (selectedSession ? `Follow up ${selectedSession.label}` : "");
+  const effectiveHandoffDescription =
+    handoffDescription ||
+    (selectedSession
+      ? `Investigate or continue work from live OpenClaw session \`${selectedSession.key}\`.`
+      : "");
+  const boardAgentOptions = useMemo(
+    () =>
+      agents.filter((agent) =>
+        effectiveHandoffBoardId ? agent.board_id === effectiveHandoffBoardId : false,
+      ),
+    [agents, effectiveHandoffBoardId],
+  );
+
+  useEffect(() => {
+    writePinnedSessionKeys(pinnedSessionKeys);
+  }, [pinnedSessionKeys]);
 
   const liveStats = useMemo(() => {
     const allSessions = gatewayStatusQueries.flatMap((query) =>
@@ -447,6 +533,74 @@ export function LiveCommandCenter() {
       toast.error(message);
     },
   });
+
+  const quickCommandMutation = useMutation({
+    mutationFn: async (content: string) => {
+      if (!selectedGateway || !effectiveSelectedSessionKey) return;
+      await postSessionMessage(selectedGateway.id, effectiveSelectedSessionKey, content);
+    },
+    onSuccess: (_, command) => {
+      toast.success(`${command} sent to live session`);
+      void sessionHistoryQuery.refetch();
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Failed to send live command";
+      toast.error(message);
+    },
+  });
+
+  const sessionActionMutation = useMutation({
+    mutationFn: async (action: "reset" | "delete") => {
+      if (!selectedGateway || !effectiveSelectedSessionKey) return;
+      await postSessionAction(selectedGateway.id, effectiveSelectedSessionKey, action);
+    },
+    onSuccess: (_, action) => {
+      toast.success(action === "reset" ? "Session reset" : "Session deleted");
+      void gatewaysQuery.refetch();
+      gatewayStatusQueries.forEach((query) => {
+        void query.refetch();
+      });
+      void sessionHistoryQuery.refetch();
+      if (action === "delete") {
+        setSelectedSessionKey(null);
+      }
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Failed to update session";
+      toast.error(message);
+    },
+  });
+
+  const handoffTaskMutation = useMutation({
+    mutationFn: async () => {
+      if (!effectiveHandoffBoardId || !effectiveHandoffTitle.trim()) {
+        throw new Error("Board and title are required for a handoff task");
+      }
+      const payload: TaskCreate = {
+        title: effectiveHandoffTitle.trim(),
+        description: effectiveHandoffDescription.trim() || null,
+        assigned_agent_id: effectiveHandoffAgentId || null,
+        status: effectiveHandoffAgentId ? "in_progress" : "inbox",
+        priority: "high",
+      };
+      return createTaskApiV1BoardsBoardIdTasksPost(effectiveHandoffBoardId, payload);
+    },
+    onSuccess: () => {
+      toast.success("Handoff task created");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Failed to create handoff task";
+      toast.error(message);
+    },
+  });
+
+  const togglePin = (sessionKey: string) => {
+    setPinnedSessionKeys((current) =>
+      current.includes(sessionKey)
+        ? current.filter((key) => key !== sessionKey)
+        : [sessionKey, ...current],
+    );
+  };
 
   if (!isAdmin) {
     return null;
@@ -580,15 +734,39 @@ export function LiveCommandCenter() {
                 Real OpenClaw sessions from the selected gateway. Managed sessions are linked
                 to Mission Control agents and boards.
               </p>
+              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
+                <label className="relative block">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={sessionFilter}
+                    onChange={(event) => setSessionFilter(event.target.value)}
+                    placeholder="Search sessions, agents, boards..."
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:border-sky-300"
+                  />
+                </label>
+                <select
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(event.target.value as "all" | "running" | "managed" | "external")
+                  }
+                  className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300"
+                >
+                  <option value="all">All sessions</option>
+                  <option value="running">Running only</option>
+                  <option value="managed">Managed only</option>
+                  <option value="external">External only</option>
+                </select>
+              </div>
             </div>
             <div className="max-h-[760px] overflow-y-auto">
               {selectedGatewayStatus?.error ? (
                 <div className="p-5 text-sm text-rose-600">{selectedGatewayStatus.error}</div>
-              ) : sessionRows.length === 0 ? (
+              ) : filteredSessionRows.length === 0 ? (
                 <div className="p-5 text-sm text-slate-500">No live sessions found.</div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {sessionRows.map(({ session, agent, board }) => {
+                  {filteredSessionRows.map(({ session, agent, board, pinned }) => {
                       const selected = session.key === effectiveSelectedSessionKey;
                     return (
                       <button
@@ -605,6 +783,11 @@ export function LiveCommandCenter() {
                             <span className="text-sm font-semibold text-slate-900">
                               {session.label}
                             </span>
+                            {pinned ? (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                Pinned
+                              </span>
+                            ) : null}
                             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                               {session.status}
                             </span>
@@ -631,6 +814,16 @@ export function LiveCommandCenter() {
                           </div>
                           {agent ? (
                             <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  togglePin(session.key);
+                                }}
+                                className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                              >
+                                {pinned ? "Unpin" : "Pin"}
+                              </button>
                               <Link
                                 href={`/agents/${agent.id}`}
                                 className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
@@ -681,30 +874,77 @@ export function LiveCommandCenter() {
                     <span>Started: {formatAbsolute(selectedSession.startedAt)}</span>
                     <span>Tokens: {formatTokens(selectedSession.totalTokens)}</span>
                   </div>
-                  {selectedSession ? (() => {
-                    const mappedAgent = resolveManagedAgent(selectedSession.key, agentLookup);
-                    const mappedBoard =
-                      mappedAgent?.board_id ? (boardById.get(mappedAgent.board_id) ?? null) : null;
-                    if (!mappedAgent) return null;
-                    return (
-                      <div className="flex flex-wrap gap-2">
-                        <Link
-                          href={`/agents/${mappedAgent.id}`}
-                          className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-                        >
-                          Manage agent
-                        </Link>
-                        {mappedBoard ? (
-                          <Link
-                            href={`/boards/${mappedBoard.id}`}
-                            className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-                          >
-                            Open board
-                          </Link>
-                        ) : null}
-                      </div>
-                    );
-                  })() : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => togglePin(selectedSession.key)}
+                    >
+                      {pinnedSessionKeySet.has(selectedSession.key) ? (
+                        <PinOff className="h-4 w-4" />
+                      ) : (
+                        <Pin className="h-4 w-4" />
+                      )}
+                      {pinnedSessionKeySet.has(selectedSession.key) ? "Unpin" : "Pin"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => quickCommandMutation.mutate("/pause")}
+                      disabled={quickCommandMutation.isPending}
+                    >
+                      <ShieldAlert className="h-4 w-4" />
+                      Pause
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => quickCommandMutation.mutate("/resume")}
+                      disabled={quickCommandMutation.isPending}
+                    >
+                      <Play className="h-4 w-4" />
+                      Resume
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => sessionActionMutation.mutate("reset")}
+                      disabled={sessionActionMutation.isPending}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Reset session
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => sessionActionMutation.mutate("delete")}
+                      disabled={sessionActionMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete session
+                    </Button>
+                    {selectedManagedAgent ? (
+                      <Link
+                        href={`/agents/${selectedManagedAgent.id}`}
+                        className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                      >
+                        Manage agent
+                      </Link>
+                    ) : null}
+                    {selectedManagedBoard ? (
+                      <Link
+                        href={`/boards/${selectedManagedBoard.id}`}
+                        className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                      >
+                        Open board
+                      </Link>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="max-h-[420px] space-y-3 overflow-y-auto px-5 py-4">
@@ -734,6 +974,72 @@ export function LiveCommandCenter() {
                 </div>
 
                 <div className="border-t border-slate-200 px-5 py-4">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Create handoff task</div>
+                        <div className="text-xs text-slate-500">
+                          Turn this live session into trackable board work with assignee context.
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3">
+                      <select
+                          value={effectiveHandoffBoardId}
+                        onChange={(event) => setHandoffBoardId(event.target.value)}
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300"
+                      >
+                        <option value="">Select board</option>
+                        {boards.map((board) => (
+                          <option key={board.id} value={board.id}>
+                            {board.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={effectiveHandoffAgentId}
+                        onChange={(event) => setHandoffAgentId(event.target.value)}
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300"
+                      >
+                        <option value="">Unassigned</option>
+                        {boardAgentOptions.map((agent) => (
+                          <option key={agent.id} value={agent.id}>
+                            {agent.name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={effectiveHandoffTitle}
+                        onChange={(event) => setHandoffTitle(event.target.value)}
+                        placeholder="Task title"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-sky-300"
+                      />
+                      <Textarea
+                        className="min-h-[96px] bg-white"
+                        value={effectiveHandoffDescription}
+                        onChange={(event) => setHandoffDescription(event.target.value)}
+                        placeholder="Describe the work to continue from this live session..."
+                      />
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs text-slate-500">
+                          Target board and assignee stay inside Mission Control, while the live session remains active.
+                        </div>
+                        <Button
+                          type="button"
+                          onClick={() => handoffTaskMutation.mutate()}
+                          disabled={
+                            handoffTaskMutation.isPending ||
+                            !effectiveHandoffBoardId ||
+                            !effectiveHandoffTitle.trim()
+                          }
+                        >
+                          {handoffTaskMutation.isPending ? "Creating..." : "Create handoff"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Delegate or steer
                   </label>
