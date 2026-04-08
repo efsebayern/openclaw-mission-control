@@ -35,6 +35,7 @@ import type {
 import { Markdown } from "@/components/atoms/Markdown";
 import { StatusPill } from "@/components/atoms/StatusPill";
 import { AgentLogConsole } from "@/components/agents/AgentLogConsole";
+import { AgentLiveOpsCard } from "@/components/agents/AgentLiveOpsCard";
 import { AgentMetricsCard } from "@/components/agents/AgentMetricsCard";
 import { GatewayApprovalsCard } from "@/components/agents/GatewayApprovalsCard";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
@@ -254,10 +255,11 @@ export default function AgentDetailPage() {
                       {agent.board_id && (
                         <GatewayApprovalsCard boardId={agent.board_id} />
                       )}
-                      <AgentMetricsCard 
-                        agentId={agent.id} 
-                        gatewayId={agent.gateway_id} 
+                      <AgentMetricsCard
+                        agentId={agent.id}
+                        gatewayId={agent.gateway_id}
                       />
+                      <AgentLiveOpsCard agent={agent} boards={boards} />
                       <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-5">
                         <div className="flex items-center justify-between">
                           <div>

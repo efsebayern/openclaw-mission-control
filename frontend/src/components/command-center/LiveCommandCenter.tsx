@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import {
   Activity,
   Bot,
@@ -41,115 +42,27 @@ import { createTaskApiV1BoardsBoardIdTasksPost } from "@/api/generated/tasks/tas
 import type { TaskCreate } from "@/api/generated/model";
 import { useOrganizationMembership } from "@/lib/use-organization-membership";
 import { readPinnedSessionKeys, writePinnedSessionKeys } from "@/lib/command-center-state";
-import { formatRelativeTimestamp, formatTimestamp, parseTimestamp } from "@/lib/formatters";
+import { formatRelativeTimestamp, formatTimestamp } from "@/lib/formatters";
+import {
+  fetchGatewayStatus,
+  fetchSessionHistory,
+  type GatewayStatusPayload,
+  normalizeLiveSessions,
+  normalizeSessionHistory,
+  postSessionAction,
+  postSessionMessage,
+  type SessionSummary,
+} from "@/lib/openclaw-live";
 import { buildAgentLookup, resolveManagedAgent } from "@/lib/openclaw-session-mapping";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+
+const DASH = "—";
 
 type ApiResponse<T> = {
   data: T;
   headers: Headers;
   status: number;
-};
-
-type GatewayStatusPayload = {
-  connected: boolean;
-  gateway_url: string;
-  sessions_count?: number | null;
-  sessions?: unknown[] | null;
-  main_session?: unknown | null;
-  main_session_error?: string | null;
-  error?: string | null;
-};
-
-type GatewayHistoryPayload = {
-  history: unknown[];
-};
-
-type SessionSummary = {
-  key: string;
-  label: string;
-  status: string;
-  updatedAt: string | null;
-  startedAt: string | null;
-  channel: string | null;
-  model: string | null;
-  totalTokens: number | null;
-  estimatedCostUsd: number | null;
-  childSessionCount: number;
-  raw: Record<string, unknown>;
-};
-
-type SessionMessage = {
-  id: string;
-  role: string;
-  content: string;
-  timestamp: string | null;
-};
-
-const DASH = "—";
-
-const toRecord = (value: unknown): Record<string, unknown> | null => {
-  if (!value || Array.isArray(value) || typeof value !== "object") return null;
-  return value as Record<string, unknown>;
-};
-
-const readString = (
-  record: Record<string, unknown> | null,
-  keys: string[],
-): string | null => {
-  if (!record) return null;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-};
-
-const readNumber = (
-  record: Record<string, unknown> | null,
-  keys: string[],
-): number | null => {
-  if (!record) return null;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string") {
-      const parsed = Number.parseFloat(value);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-  }
-  return null;
-};
-
-const normalizeEpochMs = (value: number): number => {
-  if (value >= 1_000_000_000_000) return value;
-  if (value >= 1_000_000_000) return value * 1000;
-  return value;
-};
-
-const readTimestamp = (
-  record: Record<string, unknown> | null,
-  keys: string[],
-): string | null => {
-  if (!record) return null;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      const date = new Date(normalizeEpochMs(value));
-      if (!Number.isNaN(date.getTime())) return date.toISOString();
-    }
-    if (typeof value === "string") {
-      const parsed = parseTimestamp(value);
-      if (parsed) return parsed.toISOString();
-      const numeric = Number.parseFloat(value);
-      if (Number.isFinite(numeric)) {
-        const date = new Date(normalizeEpochMs(numeric));
-        if (!Number.isNaN(date.getTime())) return date.toISOString();
-      }
-    }
-  }
-  return null;
 };
 
 const formatMoney = (value: number | null): string => {
@@ -158,113 +71,10 @@ const formatMoney = (value: number | null): string => {
   return `$${value.toFixed(2)}`;
 };
 
-const buildGatewayQuery = (gatewayId: string): string => {
-  const params = new URLSearchParams({ gateway_id: gatewayId });
-  return params.toString();
-};
-
-const parseSessionSummary = (value: unknown): SessionSummary | null => {
-  const record = toRecord(value);
-  const key = readString(record, ["key", "sessionKey", "id", "sessionId"]);
-  if (!key) return null;
-
-  const childSessions = record?.childSessions;
-  const childSessionCount = Array.isArray(childSessions) ? childSessions.length : 0;
-  const modelName = readString(record, ["model"]);
-  const modelProvider = readString(record, ["modelProvider"]);
-  const combinedModel = [modelProvider, modelName].filter(Boolean).join(" ").trim();
-
-  return {
-    key,
-    label:
-      readString(record, ["label", "displayName", "title", "name"]) ?? key,
-    status: readString(record, ["status", "state"]) ?? "unknown",
-    updatedAt: readTimestamp(record, ["updatedAt", "updated_at", "lastSeenAt"]),
-    startedAt: readTimestamp(record, ["startedAt", "started_at"]),
-    channel: readString(record, ["channel", "lastChannel", "chatType"]),
-    model: modelName ?? (combinedModel || null),
-    totalTokens: readNumber(record, ["totalTokens", "total_tokens"]),
-    estimatedCostUsd: readNumber(record, ["estimatedCostUsd", "estimated_cost_usd"]),
-    childSessionCount,
-    raw: record ?? {},
-  };
-};
-
-const parseSessionMessage = (value: unknown, index: number): SessionMessage | null => {
-  const record = toRecord(value);
-  if (!record) return null;
-  const content =
-    readString(record, ["content", "text", "message", "body"]) ?? "";
-  if (!content) return null;
-  const timestamp = readTimestamp(record, [
-    "createdAt",
-    "created_at",
-    "timestamp",
-    "ts",
-    "updatedAt",
-  ]);
-  return {
-    id: readString(record, ["id", "messageId"]) ?? `${index}:${timestamp ?? "msg"}`,
-    role:
-      readString(record, ["role", "senderRole", "author", "type"]) ?? "message",
-    content,
-    timestamp,
-  };
-};
-
-async function fetchGatewayStatus(gatewayId: string): Promise<GatewayStatusPayload> {
-  const query = buildGatewayQuery(gatewayId);
-  const response = await customFetch<ApiResponse<GatewayStatusPayload>>(
-    `/api/v1/gateways/status?${query}`,
-    { method: "GET" },
-  );
-  return response.data;
-}
-
-async function fetchSessionHistory(
-  gatewayId: string,
-  sessionId: string,
-): Promise<GatewayHistoryPayload> {
-  const query = buildGatewayQuery(gatewayId);
-  const response = await customFetch<ApiResponse<GatewayHistoryPayload>>(
-    `/api/v1/gateways/sessions/${encodeURIComponent(sessionId)}/history?${query}`,
-    { method: "GET" },
-  );
-  return response.data;
-}
-
-async function postSessionMessage(
-  gatewayId: string,
-  sessionId: string,
-  content: string,
-): Promise<void> {
-  const query = buildGatewayQuery(gatewayId);
-  await customFetch<ApiResponse<{ ok: boolean }>>(
-    `/api/v1/gateways/sessions/${encodeURIComponent(sessionId)}/message?${query}`,
-    {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    },
-  );
-}
-
-async function postSessionAction(
-  gatewayId: string,
-  sessionId: string,
-  action: "reset" | "delete",
-): Promise<void> {
-  const query = buildGatewayQuery(gatewayId);
-  const method = action === "delete" ? "DELETE" : "POST";
-  const actionPath = action === "delete" ? "" : `/${action}`;
-  await customFetch<ApiResponse<{ ok: boolean }>>(
-    `/api/v1/gateways/sessions/${encodeURIComponent(sessionId)}${actionPath}?${query}`,
-    { method },
-  );
-}
-
 export function LiveCommandCenter() {
   const { isSignedIn } = useAuth();
   const { isAdmin } = useOrganizationMembership(isSignedIn);
+  const searchParams = useSearchParams();
   const [selectedGatewayId, setSelectedGatewayId] = useState<string | null>(null);
   const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
   const [draftMessage, setDraftMessage] = useState("");
@@ -275,6 +85,10 @@ export function LiveCommandCenter() {
   const [handoffAgentId, setHandoffAgentId] = useState("");
   const [handoffTitle, setHandoffTitle] = useState("");
   const [handoffDescription, setHandoffDescription] = useState("");
+  const gatewayIdFromUrl = searchParams.get("gateway");
+  const sessionKeyFromUrl = searchParams.get("session");
+  const handoffBoardIdFromUrl = searchParams.get("handoffBoard");
+  const handoffAgentIdFromUrl = searchParams.get("handoffAgent");
 
   const gatewaysQuery = useListGatewaysApiV1GatewaysGet<
     listGatewaysApiV1GatewaysGetResponse,
@@ -350,6 +164,8 @@ export function LiveCommandCenter() {
   const effectiveSelectedGatewayId =
     selectedGatewayId && gateways.some((gateway) => gateway.id === selectedGatewayId)
       ? selectedGatewayId
+      : gatewayIdFromUrl && gateways.some((gateway) => gateway.id === gatewayIdFromUrl)
+        ? gatewayIdFromUrl
       : (gateways[0]?.id ?? null);
 
   const selectedGateway =
@@ -360,21 +176,16 @@ export function LiveCommandCenter() {
     : null;
 
   const liveSessions = useMemo(() => {
-    const records = selectedGatewayStatus?.sessions ?? [];
-    return records
-      .map(parseSessionSummary)
-      .filter((item): item is SessionSummary => item !== null)
-      .sort((left, right) => {
-        const leftTs = left.updatedAt ? Date.parse(left.updatedAt) : 0;
-        const rightTs = right.updatedAt ? Date.parse(right.updatedAt) : 0;
-        return rightTs - leftTs;
-      });
+    return normalizeLiveSessions(selectedGatewayStatus?.sessions);
   }, [selectedGatewayStatus]);
 
   const effectiveSelectedSessionKey =
     selectedSessionKey &&
     liveSessions.some((session) => session.key === selectedSessionKey)
       ? selectedSessionKey
+      : sessionKeyFromUrl &&
+          liveSessions.some((session) => session.key === sessionKeyFromUrl)
+        ? sessionKeyFromUrl
       : (liveSessions[0]?.key ?? null);
 
   const sessionHistoryQuery = useQuery({
@@ -399,10 +210,7 @@ export function LiveCommandCenter() {
   const selectedSession =
     liveSessions.find((session) => session.key === effectiveSelectedSessionKey) ?? null;
   const selectedHistory = useMemo(() => {
-    const payload = sessionHistoryQuery.data?.history ?? [];
-    return payload
-      .map(parseSessionMessage)
-      .filter((item): item is SessionMessage => item !== null);
+    return normalizeSessionHistory(sessionHistoryQuery.data?.history);
   }, [sessionHistoryQuery.data]);
 
   const boardById = useMemo(
@@ -456,8 +264,10 @@ export function LiveCommandCenter() {
   const selectedManagedAgent = selectedSession ? resolveManagedAgent(selectedSession.key, agentLookup) : null;
   const selectedManagedBoard =
     selectedManagedAgent?.board_id ? (boardById.get(selectedManagedAgent.board_id) ?? null) : null;
-  const effectiveHandoffBoardId = handoffBoardId || selectedManagedBoard?.id || "";
-  const effectiveHandoffAgentId = handoffAgentId || selectedManagedAgent?.id || "";
+  const effectiveHandoffBoardId =
+    handoffBoardId || handoffBoardIdFromUrl || selectedManagedBoard?.id || "";
+  const effectiveHandoffAgentId =
+    handoffAgentId || handoffAgentIdFromUrl || selectedManagedAgent?.id || "";
   const effectiveHandoffTitle =
     handoffTitle || (selectedSession ? `Follow up ${selectedSession.label}` : "");
   const effectiveHandoffDescription =
@@ -479,7 +289,7 @@ export function LiveCommandCenter() {
 
   const liveStats = useMemo(() => {
     const allSessions = gatewayStatusQueries.flatMap((query) =>
-      (query.data?.sessions ?? []).map(parseSessionSummary).filter(Boolean),
+      normalizeLiveSessions(query.data?.sessions),
     ) as SessionSummary[];
     const runningSessions = allSessions.filter((session) => session.status === "running").length;
     const managedSessions = allSessions.filter(
