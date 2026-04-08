@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
@@ -19,28 +20,36 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/auth/clerk";
-import { ApiError } from "@/api/mutator";
+import { ApiError, customFetch } from "@/api/mutator";
 import { useOrganizationMembership } from "@/lib/use-organization-membership";
-import {
-  type healthzHealthzGetResponse,
-  useHealthzHealthzGet,
-} from "@/api/generated/default/default";
 import { cn } from "@/lib/utils";
+
+type HealthResponse = {
+  ok?: boolean;
+};
+
+type ApiResponse<T> = {
+  data: T;
+  headers: Headers;
+  status: number;
+};
 
 export function DashboardSidebar() {
   const pathname = usePathname();
   const { isSignedIn } = useAuth();
   const { isAdmin } = useOrganizationMembership(isSignedIn);
-  const healthQuery = useHealthzHealthzGet<healthzHealthzGetResponse, ApiError>(
-    {
-      query: {
-        refetchInterval: 30_000,
-        refetchOnMount: "always",
-        retry: false,
-      },
-      request: { cache: "no-store" },
-    },
-  );
+  const healthQuery = useQuery<ApiResponse<HealthResponse>, ApiError>({
+    queryKey: ["sidebar-health"],
+    queryFn: () =>
+      customFetch<ApiResponse<HealthResponse>>("/api/healthz", {
+        method: "GET",
+        cache: "no-store",
+      }),
+    refetchInterval: 30_000,
+    refetchOnMount: "always",
+    retry: false,
+    staleTime: 5_000,
+  });
 
   const okValue = healthQuery.data?.data?.ok;
   const systemStatus: "unknown" | "operational" | "degraded" =
