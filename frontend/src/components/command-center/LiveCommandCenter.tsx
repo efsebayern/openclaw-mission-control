@@ -308,10 +308,9 @@ export function LiveCommandCenter() {
   });
 
   const gatewayStatusById = useMemo(() => {
-    const entries = gateways.map((gateway, index) => [
-      gateway.id,
-      gatewayStatusQueries[index]?.data ?? null,
-    ]);
+    const entries: Array<[string, GatewayStatusPayload | null]> = gateways.map(
+      (gateway, index) => [gateway.id, gatewayStatusQueries[index]?.data ?? null],
+    );
     return new Map(entries);
   }, [gatewayStatusQueries, gateways]);
 
