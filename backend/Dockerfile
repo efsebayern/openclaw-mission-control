@@ -50,11 +50,14 @@ COPY --chown=appuser:appgroup backend/templates ./templates
 # Copy worker scripts.
 # In-repo these live at `scripts/`; runtime path is `/app/scripts`.
 COPY --chown=appuser:appgroup scripts ./scripts
+COPY --chown=appuser:appgroup backend/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
 
 USER appuser
 
 # Default API port
 EXPOSE 8000
+
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 
 # Run the API
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
