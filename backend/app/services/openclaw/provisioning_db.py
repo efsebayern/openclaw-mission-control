@@ -64,6 +64,7 @@ from app.services.openclaw.gateway_rpc import GatewayConfig as GatewayClientConf
 from app.services.openclaw.gateway_rpc import (
     OpenClawGatewayError,
     ensure_session,
+    openclaw_call,
     send_message,
 )
 from app.services.openclaw.internal.agent_key import agent_key as _agent_key
@@ -879,6 +880,94 @@ class AgentLifecycleService(OpenClawDBService):
     def serialize_agent(cls, agent: Agent) -> dict[str, object]:
         return cls.to_agent_read(cls.with_computed_status(agent)).model_dump(mode="json")
 
+    @staticmethod
+    def _normalize_openclaw_agent_key(value: str | None) -> str | None:
+        normalized = (value or "").strip()
+        if not normalized:
+            return None
+        if normalized.startswith("agent:"):
+            parts = normalized.split(":")
+            if len(parts) >= 2 and parts[1]:
+                return parts[1]
+        return normalized
+
+    @staticmethod
+    def _as_object_list(value: object) -> list[object]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, (tuple, set)):
+            return list(value)
+        if isinstance(value, (str, bytes, dict)):
+            return []
+        if hasattr(value, "__iter__"):
+            return list(value)
+        return []
+
+    async def live_online_keys_by_gateway(
+        self,
+        agents: Sequence[Agent],
+    ) -> dict[UUID, set[str]]:
+        gateway_ids = {agent.gateway_id for agent in agents if agent.openclaw_session_id}
+        if not gateway_ids:
+            return {}
+
+        gateways = await Gateway.objects.by_field_in("id", list(gateway_ids)).all(self.session)
+        gateway_by_id = {gateway.id: gateway for gateway in gateways}
+        online_by_gateway: dict[UUID, set[str]] = {}
+
+        for gateway_id in gateway_ids:
+            gateway = gateway_by_id.get(gateway_id)
+            config = optional_gateway_client_config(gateway)
+            if config is None:
+                continue
+            try:
+                sessions = await openclaw_call("sessions.list", config=config)
+            except OpenClawGatewayError:
+                continue
+
+            if isinstance(sessions, dict):
+                raw_items = self._as_object_list(sessions.get("sessions"))
+            else:
+                raw_items = self._as_object_list(sessions)
+
+            online_keys: set[str] = set()
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                raw_key = item.get("key")
+                if not isinstance(raw_key, str) or not raw_key.strip():
+                    continue
+                key = raw_key.strip()
+                online_keys.add(key)
+                normalized = self._normalize_openclaw_agent_key(key)
+                if normalized:
+                    online_keys.add(normalized)
+            online_by_gateway[gateway_id] = online_keys
+
+        return online_by_gateway
+
+    async def with_live_runtime_status(
+        self,
+        agents: Sequence[Agent],
+    ) -> list[Agent]:
+        online_by_gateway = await self.live_online_keys_by_gateway(agents)
+        hydrated: list[Agent] = []
+        for agent in agents:
+            computed = self.with_computed_status(agent)
+            normalized_binding = self._normalize_openclaw_agent_key(computed.openclaw_session_id)
+            if (
+                normalized_binding
+                and computed.status not in {"deleting", "updating"}
+                and normalized_binding in online_by_gateway.get(computed.gateway_id, set())
+            ):
+                computed.status = "online"
+                if computed.last_seen_at is None:
+                    computed.last_seen_at = utcnow()
+            hydrated.append(computed)
+        return hydrated
+
     async def fetch_agent_events(
         self,
         board_id: UUID | None,
@@ -1533,9 +1622,10 @@ class AgentLifecycleService(OpenClawDBService):
             )
         statement = statement.order_by(col(Agent.created_at).desc())
 
-        def _transform(items: Sequence[Any]) -> Sequence[Any]:
+        async def _transform(items: Sequence[Any]) -> Sequence[Any]:
             agents = self.coerce_agent_items(items)
-            return [self.to_agent_read(self.with_computed_status(agent)) for agent in agents]
+            hydrated = await self.with_live_runtime_status(agents)
+            return [self.to_agent_read(agent) for agent in hydrated]
 
         return await paginate(self.session, statement, transformer=_transform)
 
@@ -1632,7 +1722,8 @@ class AgentLifecycleService(OpenClawDBService):
         if agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         await self.require_agent_access(agent=agent, ctx=ctx, write=False)
-        return self.to_agent_read(self.with_computed_status(agent))
+        hydrated = await self.with_live_runtime_status([agent])
+        return self.to_agent_read(hydrated[0])
 
     async def update_agent(
         self,
