@@ -18,6 +18,7 @@ from app.api.deps import (
     get_board_for_actor_read,
     get_board_for_actor_write,
     get_board_for_user_write,
+    require_org_member,
     require_user_or_agent,
 )
 from app.core.logging import get_logger
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from sqlmodel.ext.asyncio.session import AsyncSession
 
     from app.models.boards import Board
+    from app.services.organizations import OrganizationContext
 
 router = APIRouter(prefix="/boards/{board_id}/approvals", tags=["approvals"])
 logger = get_logger(__name__)
