@@ -64,6 +64,7 @@ class GatewaySessionService(OpenClawDBService):
     @staticmethod
     def to_resolve_query(
         board_id: str | None,
+        gateway_id: str | None,
         gateway_url: str | None,
         gateway_token: str | None,
         gateway_disable_device_pairing: bool | None = None,
@@ -71,6 +72,7 @@ class GatewaySessionService(OpenClawDBService):
     ) -> GatewayResolveQuery:
         return GatewayResolveQuery(
             board_id=board_id,
+            gateway_id=gateway_id,
             gateway_url=gateway_url,
             gateway_token=gateway_token,
             gateway_disable_device_pairing=gateway_disable_device_pairing,
@@ -100,16 +102,34 @@ class GatewaySessionService(OpenClawDBService):
     ) -> tuple[Board | None, GatewayClientConfig, str | None]:
         self.logger.log(
             TRACE_LEVEL,
-            "gateway.resolve.start board_id=%s gateway_url=%s",
+            "gateway.resolve.start board_id=%s gateway_id=%s gateway_url=%s",
             params.board_id,
+            params.gateway_id,
             params.gateway_url,
         )
+        if params.gateway_id:
+            gateway = await Gateway.objects.by_id(params.gateway_id).first(self.session)
+            if gateway is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Gateway not found",
+                )
+            if organization_id is not None and gateway.organization_id != organization_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Gateway not found",
+                )
+            return (
+                None,
+                gateway_client_config(gateway),
+                GatewayAgentIdentity.session_key(gateway),
+            )
         if params.gateway_url:
             raw_url = params.gateway_url.strip()
             if not raw_url:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail="board_id or gateway_url is required",
+                    detail="board_id, gateway_id, or gateway_url is required",
                 )
             token = (params.gateway_token or "").strip() or None
             gateway: Gateway | None = None
@@ -145,7 +165,7 @@ class GatewaySessionService(OpenClawDBService):
         if not params.board_id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="board_id or gateway_url is required",
+                detail="board_id, gateway_id, or gateway_url is required",
             )
         board = await Board.objects.by_id(params.board_id).first(self.session)
         if board is None:
@@ -163,21 +183,6 @@ class GatewaySessionService(OpenClawDBService):
             config,
             main_session,
         )
-
-    async def require_gateway(
-        self,
-        board_id: str | None,
-        *,
-        user: User | None = None,
-    ) -> tuple[Board, GatewayClientConfig, str | None]:
-        params = GatewayResolveQuery(board_id=board_id)
-        board, config, main_session = await self.resolve_gateway(params, user=user)
-        if board is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="board_id is required",
-            )
-        return board, config, main_session
 
     async def list_sessions(self, config: GatewayClientConfig) -> list[dict[str, object]]:
         sessions = await openclaw_call("sessions.list", config=config)
@@ -274,12 +279,15 @@ class GatewaySessionService(OpenClawDBService):
     async def get_sessions(
         self,
         *,
-        board_id: str | None,
+        params: GatewayResolveQuery,
         organization_id: UUID,
         user: User | None,
     ) -> GatewaySessionsResponse:
-        params = GatewayResolveQuery(board_id=board_id)
-        board, config, main_session = await self.resolve_gateway(params, user=user)
+        board, config, main_session = await self.resolve_gateway(
+            params,
+            user=user,
+            organization_id=organization_id,
+        )
         self._require_same_org(board, organization_id)
         try:
             sessions = await openclaw_call("sessions.list", config=config)
@@ -311,12 +319,15 @@ class GatewaySessionService(OpenClawDBService):
         self,
         *,
         session_id: str,
-        board_id: str | None,
+        params: GatewayResolveQuery,
         organization_id: UUID,
         user: User | None,
     ) -> GatewaySessionResponse:
-        params = GatewayResolveQuery(board_id=board_id)
-        board, config, main_session = await self.resolve_gateway(params, user=user)
+        board, config, main_session = await self.resolve_gateway(
+            params,
+            user=user,
+            organization_id=organization_id,
+        )
         self._require_same_org(board, organization_id)
         try:
             sessions_list = await self.list_sessions(config)
@@ -355,11 +366,15 @@ class GatewaySessionService(OpenClawDBService):
         self,
         *,
         session_id: str,
-        board_id: str | None,
+        params: GatewayResolveQuery,
         organization_id: UUID,
         user: User | None,
     ) -> GatewaySessionHistoryResponse:
-        board, config, _ = await self.require_gateway(board_id, user=user)
+        board, config, _ = await self.resolve_gateway(
+            params,
+            user=user,
+            organization_id=organization_id,
+        )
         self._require_same_org(board, organization_id)
         try:
             history = await get_chat_history(session_id, config=config)
@@ -377,15 +392,20 @@ class GatewaySessionService(OpenClawDBService):
         *,
         session_id: str,
         payload: GatewaySessionMessageRequest,
-        board_id: str | None,
+        params: GatewayResolveQuery,
         organization_id: UUID,
         user: User | None,
     ) -> None:
-        board, config, main_session = await self.require_gateway(board_id, user=user)
+        board, config, main_session = await self.resolve_gateway(
+            params,
+            user=user,
+            organization_id=organization_id,
+        )
         self._require_same_org(board, organization_id)
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-        await require_board_access(self.session, user=user, board=board, write=True)
+        if board is not None:
+            await require_board_access(self.session, user=user, board=board, write=True)
         try:
             if main_session and session_id == main_session:
                 await ensure_session(main_session, config=config, label="Gateway Agent")

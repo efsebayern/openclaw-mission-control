@@ -35,6 +35,7 @@ BOARD_ID_QUERY = Query(default=None)
 
 def _query_to_resolve_input(
     board_id: str | None = Query(default=None),
+    gateway_id: str | None = Query(default=None),
     gateway_url: str | None = Query(default=None),
     gateway_token: str | None = Query(default=None),
     gateway_disable_device_pairing: bool | None = Query(default=None),
@@ -42,6 +43,7 @@ def _query_to_resolve_input(
 ) -> GatewayResolveQuery:
     return GatewaySessionService.to_resolve_query(
         board_id=board_id,
+        gateway_id=gateway_id,
         gateway_url=gateway_url,
         gateway_token=gateway_token,
         gateway_disable_device_pairing=gateway_disable_device_pairing,
@@ -70,7 +72,7 @@ async def gateways_status(
 
 @router.get("/sessions", response_model=GatewaySessionsResponse)
 async def list_gateway_sessions(
-    board_id: str | None = BOARD_ID_QUERY,
+    params: GatewayResolveQuery = RESOLVE_INPUT_DEP,
     session: AsyncSession = SESSION_DEP,
     auth: AuthContext = AUTH_DEP,
     ctx: OrganizationContext = ORG_ADMIN_DEP,
@@ -78,7 +80,7 @@ async def list_gateway_sessions(
     """List sessions for a gateway associated with a board."""
     service = GatewaySessionService(session)
     return await service.get_sessions(
-        board_id=board_id,
+        params=params,
         organization_id=ctx.organization.id,
         user=auth.user,
     )
@@ -87,7 +89,7 @@ async def list_gateway_sessions(
 @router.get("/sessions/{session_id}", response_model=GatewaySessionResponse)
 async def get_gateway_session(
     session_id: str,
-    board_id: str | None = BOARD_ID_QUERY,
+    params: GatewayResolveQuery = RESOLVE_INPUT_DEP,
     session: AsyncSession = SESSION_DEP,
     auth: AuthContext = AUTH_DEP,
     ctx: OrganizationContext = ORG_ADMIN_DEP,
@@ -96,7 +98,7 @@ async def get_gateway_session(
     service = GatewaySessionService(session)
     return await service.get_session(
         session_id=session_id,
-        board_id=board_id,
+        params=params,
         organization_id=ctx.organization.id,
         user=auth.user,
     )
@@ -105,7 +107,7 @@ async def get_gateway_session(
 @router.get("/sessions/{session_id}/history", response_model=GatewaySessionHistoryResponse)
 async def get_session_history(
     session_id: str,
-    board_id: str | None = BOARD_ID_QUERY,
+    params: GatewayResolveQuery = RESOLVE_INPUT_DEP,
     session: AsyncSession = SESSION_DEP,
     auth: AuthContext = AUTH_DEP,
     ctx: OrganizationContext = ORG_ADMIN_DEP,
@@ -114,7 +116,7 @@ async def get_session_history(
     service = GatewaySessionService(session)
     return await service.get_session_history(
         session_id=session_id,
-        board_id=board_id,
+        params=params,
         organization_id=ctx.organization.id,
         user=auth.user,
     )
@@ -124,7 +126,7 @@ async def get_session_history(
 async def send_gateway_session_message(
     session_id: str,
     payload: GatewaySessionMessageRequest,
-    board_id: str | None = BOARD_ID_QUERY,
+    params: GatewayResolveQuery = RESOLVE_INPUT_DEP,
     session: AsyncSession = SESSION_DEP,
     auth: AuthContext = AUTH_DEP,
     ctx: OrganizationContext = ORG_ADMIN_DEP,
@@ -134,7 +136,7 @@ async def send_gateway_session_message(
     await service.send_session_message(
         session_id=session_id,
         payload=payload,
-        board_id=board_id,
+        params=params,
         organization_id=ctx.organization.id,
         user=auth.user,
     )

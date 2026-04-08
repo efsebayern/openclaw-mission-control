@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Folder,
   Building2,
+  Command,
   LayoutGrid,
   Network,
   Settings,
@@ -92,6 +93,18 @@ export function DashboardSidebar() {
               >
                 <Activity className="h-4 w-4" />
                 Live feed
+              </Link>
+              <Link
+                href="/command-center"
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-slate-700 transition",
+                  pathname.startsWith("/command-center")
+                    ? "bg-blue-100 text-blue-800 font-medium"
+                    : "hover:bg-slate-100",
+                )}
+              >
+                <Command className="h-4 w-4" />
+                Command center
               </Link>
             </div>
           </div>
