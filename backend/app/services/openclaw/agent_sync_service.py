@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime
+import re
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 
 from app.core.logging import get_logger
 from app.core.time import utcnow
@@ -22,6 +21,12 @@ from app.services.openclaw.gateway_rpc import openclaw_call, GatewayConfig
 from app.services.openclaw.gateway_resolver import gateway_client_config
 
 logger = get_logger(__name__)
+SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(value: str) -> str:
+    slug = SLUG_RE.sub("-", value.lower()).strip("-")
+    return slug or f"imported-{uuid4().hex[:8]}"
 
 
 class AgentSyncService(OpenClawDBService):
@@ -54,7 +59,7 @@ class AgentSyncService(OpenClawDBService):
 
         # Get existing agents managed by this gateway in Mission Control
         existing_mc_agents = await self.session.exec(
-            Agent.query().where(Agent.gateway_id == gateway_id)
+            select(Agent).where(Agent.gateway_id == gateway_id)
         )
         existing_mc_agents_map = {
             a.openclaw_session_id: a for a in existing_mc_agents.all()
@@ -83,6 +88,7 @@ class AgentSyncService(OpenClawDBService):
                     agent_data, default_board.id
                 )
                 existing_agent.sqlmodel_update(update_data)
+                existing_agent.updated_at = utcnow()
                 self.session.add(existing_agent)
                 synchronized_agents.append(existing_agent)
             else:
@@ -109,14 +115,15 @@ class AgentSyncService(OpenClawDBService):
     async def _get_or_create_default_board(self, organization_id: UUID, gateway_id: UUID) -> Board:
         """Gets or creates a default board for imported agents."""
         # Check for an existing 'Imported Agents' board for this organization and gateway
-        existing_board = (await self.session.exec(
-            Board.query()
-            .where(
-                Board.organization_id == organization_id,
-                Board.gateway_id == gateway_id,
-                Board.name == "Imported Agents",
+        existing_board = (
+            await self.session.exec(
+                select(Board).where(
+                    Board.organization_id == organization_id,
+                    Board.gateway_id == gateway_id,
+                    Board.name == "Imported Agents",
+                )
             )
-        )).first()
+        ).first()
 
         if existing_board:
             return existing_board
@@ -124,17 +131,11 @@ class AgentSyncService(OpenClawDBService):
         # If no default board exists, create one
         new_board = Board(
             name="Imported Agents",
+            slug=_slugify(f"imported-agents-{gateway_id}"),
             description="Default board for agents synchronized from OpenClaw Gateway.",
             organization_id=organization_id,
             gateway_id=gateway_id,
-            is_active=True,
-            is_template=False,
-            # Set other required fields to sensible defaults
-            status_summary = {},
-            skills = [],
-            access_policy = {},
-            custom_fields = [],
-            last_activity_at = utcnow(),
+            board_type="goal",
         )
         self.session.add(new_board)
         await self.session.commit()

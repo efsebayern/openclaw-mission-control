@@ -10,6 +10,7 @@ import {
   RefreshCw,
   SendHorizontal,
   TerminalSquare,
+  Wrench,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -414,6 +415,26 @@ export function LiveCommandCenter() {
     };
   }, [agentBySessionKey, gatewayStatusQueries, gateways.length]);
 
+  const syncAgentsMutation = useMutation({
+    mutationFn: async (gatewayId: string) => {
+      const response = await customFetch<ApiResponse<unknown[]>>(
+        `/api/v1/gateways/${gatewayId}/sync-agents`,
+        { method: "POST" },
+      );
+      return response.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Synchronized ${data.length} agents`);
+      void agentsQuery.refetch();
+      void boardsQuery.refetch();
+      void gatewaysQuery.refetch();
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Failed to sync agents";
+      toast.error(message);
+    },
+  });
+
   const sendMutation = useMutation({
     mutationFn: async () => {
       if (!selectedGateway || !effectiveSelectedSessionKey) return;
@@ -488,14 +509,28 @@ export function LiveCommandCenter() {
                 <h2 className="text-lg font-semibold text-slate-900">Gateways</h2>
                 <p className="text-sm text-slate-500">Connected OpenClaw control planes</p>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                onClick={() => gatewaysQuery.refetch()}
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedGateway ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => syncAgentsMutation.mutate(selectedGateway.id)}
+                    disabled={syncAgentsMutation.isPending}
+                  >
+                    <Wrench className="h-4 w-4" />
+                    Sync agents
+                  </Button>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onClick={() => gatewaysQuery.refetch()}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
 
             <div className="mt-4 space-y-3">
@@ -600,6 +635,24 @@ export function LiveCommandCenter() {
                             <span>Channel: {session.channel ?? DASH}</span>
                             <span>Children: {session.childSessionCount}</span>
                           </div>
+                          {agent ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Link
+                                href={`/agents/${agent.id}`}
+                                className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                              >
+                                Open agent
+                              </Link>
+                              {board ? (
+                                <Link
+                                  href={`/boards/${board.id}`}
+                                  className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                                >
+                                  Open board
+                                </Link>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="shrink-0 text-right text-xs text-slate-500">
                           <div>{formatTokens(session.totalTokens)}</div>
@@ -634,6 +687,30 @@ export function LiveCommandCenter() {
                     <span>Started: {formatAbsolute(selectedSession.startedAt)}</span>
                     <span>Tokens: {formatTokens(selectedSession.totalTokens)}</span>
                   </div>
+                  {selectedSession ? (() => {
+                    const mappedAgent = agentBySessionKey.get(selectedSession.key) ?? null;
+                    const mappedBoard =
+                      mappedAgent?.board_id ? (boardById.get(mappedAgent.board_id) ?? null) : null;
+                    if (!mappedAgent) return null;
+                    return (
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          href={`/agents/${mappedAgent.id}`}
+                          className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                        >
+                          Manage agent
+                        </Link>
+                        {mappedBoard ? (
+                          <Link
+                            href={`/boards/${mappedBoard.id}`}
+                            className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            Open board
+                          </Link>
+                        ) : null}
+                      </div>
+                    );
+                  })() : null}
                 </div>
 
                 <div className="max-h-[420px] space-y-3 overflow-y-auto px-5 py-4">

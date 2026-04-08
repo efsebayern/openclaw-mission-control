@@ -519,6 +519,28 @@ def healthz() -> HealthStatusResponse:
 
 
 @app.get(
+    "/api/health",
+    tags=["health"],
+    response_model=HealthStatusResponse,
+    include_in_schema=False,
+)
+def api_health() -> HealthStatusResponse:
+    """API-prefixed health alias for frontend deployments behind `/api` routing."""
+    return health()
+
+
+@app.get(
+    "/api/healthz",
+    tags=["health"],
+    response_model=HealthStatusResponse,
+    include_in_schema=False,
+)
+def api_healthz() -> HealthStatusResponse:
+    """API-prefixed healthz alias for frontend deployments behind `/api` routing."""
+    return healthz()
+
+
+@app.get(
     "/readyz",
     tags=["health"],
     response_model=HealthStatusResponse,
@@ -534,6 +556,17 @@ def healthz() -> HealthStatusResponse:
 def readyz() -> HealthStatusResponse:
     """Readiness probe endpoint for service orchestration checks."""
     return HealthStatusResponse(ok=True)
+
+
+@app.get(
+    "/api/readyz",
+    tags=["health"],
+    response_model=HealthStatusResponse,
+    include_in_schema=False,
+)
+def api_readyz() -> HealthStatusResponse:
+    """API-prefixed readiness alias for frontend deployments behind `/api` routing."""
+    return readyz()
 
 
 api_v1 = APIRouter(prefix="/api/v1")
