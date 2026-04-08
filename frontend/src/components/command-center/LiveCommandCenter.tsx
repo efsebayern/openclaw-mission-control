@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueries } from "@tanstack/react-query";
 import {
   Activity,
@@ -158,6 +158,9 @@ const parseSessionSummary = (value: unknown): SessionSummary | null => {
 
   const childSessions = record?.childSessions;
   const childSessionCount = Array.isArray(childSessions) ? childSessions.length : 0;
+  const modelName = readString(record, ["model"]);
+  const modelProvider = readString(record, ["modelProvider"]);
+  const combinedModel = [modelProvider, modelName].filter(Boolean).join(" ").trim();
 
   return {
     key,
@@ -167,16 +170,7 @@ const parseSessionSummary = (value: unknown): SessionSummary | null => {
     updatedAt: readTimestamp(record, ["updatedAt", "updated_at", "lastSeenAt"]),
     startedAt: readTimestamp(record, ["startedAt", "started_at"]),
     channel: readString(record, ["channel", "lastChannel", "chatType"]),
-    model:
-      readString(record, ["model"]) ??
-      [
-        readString(record, ["modelProvider"]),
-        readString(record, ["model"]),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .trim() ||
-      null,
+    model: modelName ?? (combinedModel || null),
     totalTokens: readNumber(record, ["totalTokens", "total_tokens"]),
     estimatedCostUsd: readNumber(record, ["estimatedCostUsd", "estimated_cost_usd"]),
     childSessionCount,
@@ -321,22 +315,16 @@ export function LiveCommandCenter() {
     return new Map(entries);
   }, [gatewayStatusQueries, gateways]);
 
+  const effectiveSelectedGatewayId =
+    selectedGatewayId && gateways.some((gateway) => gateway.id === selectedGatewayId)
+      ? selectedGatewayId
+      : (gateways[0]?.id ?? null);
+
   const selectedGateway =
-    gateways.find((gateway) => gateway.id === selectedGatewayId) ?? null;
+    gateways.find((gateway) => gateway.id === effectiveSelectedGatewayId) ?? null;
 
-  useEffect(() => {
-    if (!gateways.length) {
-      setSelectedGatewayId(null);
-      return;
-    }
-    if (selectedGatewayId && gateways.some((gateway) => gateway.id === selectedGatewayId)) {
-      return;
-    }
-    setSelectedGatewayId(gateways[0]?.id ?? null);
-  }, [gateways, selectedGatewayId]);
-
-  const selectedGatewayStatus = selectedGatewayId
-    ? gatewayStatusById.get(selectedGatewayId) ?? null
+  const selectedGatewayStatus = effectiveSelectedGatewayId
+    ? gatewayStatusById.get(effectiveSelectedGatewayId) ?? null
     : null;
 
   const liveSessions = useMemo(() => {
@@ -351,29 +339,27 @@ export function LiveCommandCenter() {
       });
   }, [selectedGatewayStatus]);
 
-  useEffect(() => {
-    if (!liveSessions.length) {
-      setSelectedSessionKey(null);
-      return;
-    }
-    if (selectedSessionKey && liveSessions.some((session) => session.key === selectedSessionKey)) {
-      return;
-    }
-    setSelectedSessionKey(liveSessions[0]?.key ?? null);
-  }, [liveSessions, selectedSessionKey]);
+  const effectiveSelectedSessionKey =
+    selectedSessionKey &&
+    liveSessions.some((session) => session.key === selectedSessionKey)
+      ? selectedSessionKey
+      : (liveSessions[0]?.key ?? null);
 
   const sessionHistoryQueries = useQueries({
-    queries: selectedGateway && selectedSessionKey
+    queries: selectedGateway && effectiveSelectedSessionKey
       ? [
           {
             queryKey: [
               "live-command-center",
               "session-history",
               selectedGateway.id,
-              selectedSessionKey,
+              effectiveSelectedSessionKey,
             ],
-            queryFn: () => fetchSessionHistory(selectedGateway.id, selectedSessionKey),
-            enabled: Boolean(isSignedIn && isAdmin && selectedGateway && selectedSessionKey),
+            queryFn: () =>
+              fetchSessionHistory(selectedGateway.id, effectiveSelectedSessionKey),
+            enabled: Boolean(
+              isSignedIn && isAdmin && selectedGateway && effectiveSelectedSessionKey,
+            ),
             refetchInterval: 5_000,
             staleTime: 2_000,
             retry: false,
@@ -382,7 +368,8 @@ export function LiveCommandCenter() {
       : [],
   });
 
-  const selectedSession = liveSessions.find((session) => session.key === selectedSessionKey) ?? null;
+  const selectedSession =
+    liveSessions.find((session) => session.key === effectiveSelectedSessionKey) ?? null;
   const selectedHistory = useMemo(() => {
     const payload = sessionHistoryQueries[0]?.data?.history ?? [];
     return payload
@@ -434,8 +421,12 @@ export function LiveCommandCenter() {
 
   const sendMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedGateway || !selectedSessionKey) return;
-      await postSessionMessage(selectedGateway.id, selectedSessionKey, draftMessage.trim());
+      if (!selectedGateway || !effectiveSelectedSessionKey) return;
+      await postSessionMessage(
+        selectedGateway.id,
+        effectiveSelectedSessionKey,
+        draftMessage.trim(),
+      );
     },
     onSuccess: () => {
       toast.success("Message sent to live session");
@@ -574,7 +565,7 @@ export function LiveCommandCenter() {
               ) : (
                 <div className="divide-y divide-slate-100">
                   {sessionRows.map(({ session, agent, board }) => {
-                    const selected = session.key === selectedSessionKey;
+                      const selected = session.key === effectiveSelectedSessionKey;
                     return (
                       <button
                         key={session.key}
