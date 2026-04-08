@@ -33,6 +33,12 @@ def _slugify(value: str) -> str:
 class AgentSyncService(OpenClawDBService):
     """Service for synchronizing agents from OpenClaw Gateway to Mission Control DB."""
 
+    @staticmethod
+    def _is_channel_group_agent(agent_data: dict[str, Any]) -> bool:
+        raw_id = str(agent_data.get("id") or "").strip().lower()
+        raw_name = str(agent_data.get("name") or "").strip().lower()
+        return raw_id.startswith("discord-group-") or raw_name.startswith("discord-group-")
+
     async def sync_agents_from_gateway(
         self,
         gateway_id: UUID,
@@ -71,9 +77,12 @@ class AgentSyncService(OpenClawDBService):
             await self.session.delete(imported_gateway_main)
             existing_mc_agents_map.pop(gateway_main_openclaw_id, None)
 
-        # For now, create a default board if none exists.
-        # This is a temporary solution for agents without a board_id from gateway.
-        default_board = await self._get_or_create_default_board(organization.id, gateway.id)
+        imported_board = await self._get_or_create_default_board(organization.id, gateway.id)
+        preferred_board = await self._get_preferred_sync_board(
+            organization_id=organization.id,
+            gateway_id=gateway.id,
+            imported_board_id=imported_board.id,
+        )
 
         synchronized_agents: list[Agent] = []
         for agent_data in gateway_agents_data:
@@ -92,13 +101,18 @@ class AgentSyncService(OpenClawDBService):
                     gateway_id,
                 )
                 continue
+            target_board = (
+                imported_board
+                if self._is_channel_group_agent(agent_data) or preferred_board is None
+                else preferred_board
+            )
 
             existing_agent = existing_mc_agents_map.get(openclaw_session_id)
 
             if existing_agent:
                 # Update existing agent
                 update_data = self._map_gateway_agent_to_mc_update(
-                    agent_data, default_board.id
+                    agent_data, target_board.id
                 )
                 existing_agent.sqlmodel_update(update_data)
                 existing_agent.updated_at = utcnow()
@@ -107,7 +121,7 @@ class AgentSyncService(OpenClawDBService):
             else:
                 # Create new agent
                 create_data = self._map_gateway_agent_to_mc_create(
-                    agent_data, gateway_id, default_board.id
+                    agent_data, gateway_id, target_board.id
                 )
                 new_agent = Agent(**create_data)
                 self.session.add(new_agent)
@@ -160,6 +174,31 @@ class AgentSyncService(OpenClawDBService):
             gateway_id,
         )
         return new_board
+
+    async def _get_preferred_sync_board(
+        self,
+        *,
+        organization_id: UUID,
+        gateway_id: UUID,
+        imported_board_id: UUID,
+    ) -> Board | None:
+        boards = (
+            await self.session.exec(
+                select(Board).where(
+                    Board.organization_id == organization_id,
+                    Board.gateway_id == gateway_id,
+                )
+            )
+        ).all()
+
+        candidate_boards = [
+            board
+            for board in boards
+            if board.id != imported_board_id and board.name != "Imported Agents"
+        ]
+        if len(candidate_boards) == 1:
+            return candidate_boards[0]
+        return None
 
 
     def _map_gateway_agent_to_mc_create(
