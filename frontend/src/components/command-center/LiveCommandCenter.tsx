@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
-import { useMutation, useQueries } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import {
   Activity,
   Bot,
@@ -344,37 +344,33 @@ export function LiveCommandCenter() {
       ? selectedSessionKey
       : (liveSessions[0]?.key ?? null);
 
-  const sessionHistoryQueries = useQueries({
-    queries: selectedGateway && effectiveSelectedSessionKey
-      ? [
-          {
-            queryKey: [
-              "live-command-center",
-              "session-history",
-              selectedGateway.id,
-              effectiveSelectedSessionKey,
-            ],
-            queryFn: () =>
-              fetchSessionHistory(selectedGateway.id, effectiveSelectedSessionKey),
-            enabled: Boolean(
-              isSignedIn && isAdmin && selectedGateway && effectiveSelectedSessionKey,
-            ),
-            refetchInterval: 5_000,
-            staleTime: 2_000,
-            retry: false,
-          },
-        ]
-      : [],
+  const sessionHistoryQuery = useQuery({
+    queryKey: [
+      "live-command-center",
+      "session-history",
+      selectedGateway?.id ?? "none",
+      effectiveSelectedSessionKey ?? "none",
+    ],
+    queryFn: () => {
+      if (!selectedGateway || !effectiveSelectedSessionKey) {
+        throw new Error("A selected gateway session is required");
+      }
+      return fetchSessionHistory(selectedGateway.id, effectiveSelectedSessionKey);
+    },
+    enabled: Boolean(isSignedIn && isAdmin && selectedGateway && effectiveSelectedSessionKey),
+    refetchInterval: 5_000,
+    staleTime: 2_000,
+    retry: false,
   });
 
   const selectedSession =
     liveSessions.find((session) => session.key === effectiveSelectedSessionKey) ?? null;
   const selectedHistory = useMemo(() => {
-    const payload = sessionHistoryQueries[0]?.data?.history ?? [];
+    const payload = sessionHistoryQuery.data?.history ?? [];
     return payload
       .map(parseSessionMessage)
       .filter((item): item is SessionMessage => item !== null);
-  }, [sessionHistoryQueries]);
+  }, [sessionHistoryQuery.data]);
 
   const boardById = useMemo(
     () => new Map(boards.map((board) => [board.id, board] as const)),
