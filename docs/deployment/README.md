@@ -26,6 +26,8 @@ Edit `.env`:
 - **Set** `LOCAL_AUTH_TOKEN` to a non-placeholder value (≥ 50 chars)
 - Ensure `BASE_URL` matches the public backend origin if it is not `http://localhost:8000`
 - Ensure `NEXT_PUBLIC_API_URL` is reachable from the browser (not a Docker-internal hostname)
+- For same-host path routing, set `NEXT_PUBLIC_API_URL` explicitly to the public
+  API path, e.g. `https://mc.example.com/api`
 
 Key variables (from `.env.example` / `compose.yml`):
 
@@ -63,6 +65,26 @@ If the frontend loads but API calls fail, double-check:
 
 - `NEXT_PUBLIC_API_URL` is set and reachable from the **browser**
 - backend CORS includes the frontend origin (`CORS_ORIGINS`)
+
+### Coolify / path-based reverse proxy
+
+For a Coolify Docker Compose deployment where the frontend is served at
+`https://mc.example.com` and the backend is served at
+`https://mc.example.com/api`:
+
+- Set `NEXT_PUBLIC_API_URL=https://mc.example.com/api`
+- Set `BASE_URL=https://mc.example.com`
+- Set `CORS_ORIGINS=https://mc.example.com`
+
+In Coolify, configure the Docker Compose service domains explicitly:
+
+- frontend service domain: `https://mc.example.com`
+- backend service domain: `https://mc.example.com/api`
+
+Do not leave the backend service domain empty and do not use `localhost`.
+Coolify derives service-level `SERVICE_URL_*` and `SERVICE_FQDN_*` variables
+from that mapping. If the backend service domain is blank or resolves to
+`localhost`, Coolify can render invalid backend router labels.
 
 ## Database persistence
 

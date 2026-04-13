@@ -94,6 +94,7 @@ Before startup:
 - Ensure `BASE_URL` matches the public backend origin if you are not using `http://localhost:8000`.
 - `NEXT_PUBLIC_API_URL=auto` (default) resolves to `http(s)://<current-host>:8000`.
   - Set an explicit URL when your API is behind a reverse proxy or non-default port.
+  - For same-host path routing, use the full public API path, e.g. `https://mc.example.com/api`.
 
 ### 2. Start Mission Control
 
@@ -130,6 +131,23 @@ For a fully clean rebuild (no cached build layers):
 docker compose -f compose.yml --env-file .env build --no-cache --pull
 docker compose -f compose.yml --env-file .env up -d --force-recreate
 ```
+
+### Reverse proxy and Coolify
+
+If you publish Mission Control behind a reverse proxy on the same host and expose
+the backend under `/api`, do not keep `NEXT_PUBLIC_API_URL=auto`.
+
+- Set `NEXT_PUBLIC_API_URL` to the public API URL, e.g. `https://mc.example.com/api`
+- Set `BASE_URL` to the public origin used by the backend in generated links and templates
+- Set `CORS_ORIGINS` to the public frontend origin, e.g. `https://mc.example.com`
+
+For Coolify Docker Compose apps, configure both service domains explicitly:
+
+- frontend service domain: `https://mc.example.com`
+- backend service domain: `https://mc.example.com/api`
+
+If the backend service domain is left empty or falls back to `localhost`,
+Coolify can generate invalid Traefik router labels for the backend service.
 
 ### 3. Open the application
 
